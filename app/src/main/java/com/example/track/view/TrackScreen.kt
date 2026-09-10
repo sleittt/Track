@@ -5,11 +5,15 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color.WHITE
+import android.graphics.Color.parseColor
 import android.graphics.Paint
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,6 +25,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +46,8 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.toColorInt
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.overlay.Polyline
 
 @Composable
 fun TrackScreen(viewModel: TrackViewModel){
@@ -83,41 +90,94 @@ fun TrackScreen(viewModel: TrackViewModel){
             viewModel.consumeGpsError()
         }
     }
+    val exportMessage = viewModel.exportMessage
+    LaunchedEffect(exportMessage) {
+        exportMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.consumeExportMessage()
+        }
+    }
+    val mapView = remember {
+        MapView(context).apply {
+            setTileSource(osmDe)
+            setMultiTouchControls(true)
+            zoomController.setVisibility(CustomZoomButtonsController.Visibility.ALWAYS)
+            controller.setZoom(16.0)
+
+            overlays.add(
+                MyLocationNewOverlay(this).apply {
+                    setPersonIcon(createLocationIcon())
+                    enableMyLocation()
+                    enableFollowLocation()
+                }
+            )
+            val myLocation = MyLocationNewOverlay(this).apply {
+                setPersonIcon(createLocationIcon())
+                enableMyLocation()
+                enableFollowLocation()
+            }
+            overlays.add(myLocation)
+        }
+    }
+
+    val trackPolyline = remember {
+        Polyline().apply {
+            outlinePaint.color = "#D32F2F".toColorInt()
+            outlinePaint.strokeWidth = 10f
+        }
+    }
+
+    LaunchedEffect(mapView) {
+        mapView.overlays.add(trackPolyline)
+    }
+
+    DisposableEffect(Unit) {
+        mapView.onResume()
+        onDispose { mapView.onPause() }
+    }
     Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             // карта
-            AndroidView(
-                factory = { ctx ->
-                    android.widget.FrameLayout(ctx).apply {
-                        clipChildren = true
-                        addView(
-                            MapView(ctx).apply {
-                                setTileSource(osmDe)
-                                setMultiTouchControls(true)
-                                zoomController.setVisibility(CustomZoomButtonsController.Visibility.ALWAYS)
-                                controller.setZoom(6.0)
-
-                                // Маркер текущего положения
-                                val myLocation = MyLocationNewOverlay(this).apply {
-                                    setPersonIcon(createLocationIcon())
-                                    setDirectionIcon(createLocationIcon())
-                                    enableMyLocation()
-                                    enableFollowLocation() // карта само центрируется на вас
-                                }
-                                overlays.add(myLocation)
-                            },
-                            android.widget.FrameLayout.LayoutParams(
-                                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+            Box(modifier = Modifier.fillMaxWidth().weight(0.7f).clipToBounds()) {
+                AndroidView(
+                    factory = { ctx ->
+                        android.widget.FrameLayout(ctx).apply {
+                            clipChildren = true
+                            addView(
+                                mapView,
+                                android.widget.FrameLayout.LayoutParams(
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                                )
                             )
-                        )
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(0.7f)
-                    .clipToBounds()
-            )
+                        }
+                    },
+                    update = {
+                        trackPolyline.setPoints(viewModel.points.map { it.toGeoPoint() })
+                        mapView.invalidate()
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                Button(
+                    onClick = {
+                        viewModel.currentLocation?.let {
+                            mapView.controller.animateTo(GeoPoint(it.latitude, it.longitude))
+                        }
+                        mapView.overlays
+                            .filterIsInstance<MyLocationNewOverlay>()
+                            .firstOrNull()
+                            ?.enableFollowLocation()
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 64.dp, bottom = 12.dp)
+                        .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text("◎")
+                }
+            }
             // панель
             Column(
                 modifier = Modifier
@@ -139,14 +199,14 @@ fun TrackScreen(viewModel: TrackViewModel){
                         statusColor = Color(0xFFD32F2F)
                     }
                     TrackStat.STOPPED -> {
-                        statusText = "Запись остановлена. Точек: ${viewModel.pointCount}"
+                        statusText = "Запись остановлена. Точек: ${viewModel.points.size}"
                         statusColor = Color(0xFF388E3C)
                     }
                 }
                 Text(statusText, color = statusColor, style = MaterialTheme.typography.titleMedium)
 
                 // Счётчик (отдельно, чтобы был всегда)
-                Text("Точек: ${viewModel.pointCount}")
+                Text("Точек: ${viewModel.points.size}")
 
                 // Кнопка с двумя состояниями
                 val recording = viewModel.status == TrackStat.RECORDING
