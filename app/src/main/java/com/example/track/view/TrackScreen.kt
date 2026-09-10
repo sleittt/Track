@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -58,6 +59,7 @@ fun TrackScreen(viewModel: TrackViewModel){
     )
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val importMessage = viewModel.importMessage
 
     val requiredPermissions = arrayOf(
         Manifest.permission.ACCESS_FINE_LOCATION,
@@ -77,11 +79,26 @@ fun TrackScreen(viewModel: TrackViewModel){
         results ->
         permissionGranted = results.values.any{it}
     }
+    val openFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { viewModel.importTrack(it) } }
+    val importedPolyline = remember {
+        Polyline().apply {
+            outlinePaint.color = "#1E88E5".toColorInt()
+            outlinePaint.strokeWidth = 10f
+        }
+    }
     LaunchedEffect(Unit) {
         if (!permissionGranted) permissionLauncher.launch(requiredPermissions)
     }
     LaunchedEffect(permissionGranted) {
         if (permissionGranted) viewModel.startLocationUpdates()
+    }
+    LaunchedEffect(importMessage) {
+        importMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.consumeImportMessage()
+        }
     }
     val gpsError = viewModel.gpsError
     LaunchedEffect(gpsError) {
@@ -129,6 +146,7 @@ fun TrackScreen(viewModel: TrackViewModel){
 
     LaunchedEffect(mapView) {
         mapView.overlays.add(trackPolyline)
+        mapView.overlays.add(importedPolyline)
     }
 
     DisposableEffect(Unit) {
@@ -154,6 +172,7 @@ fun TrackScreen(viewModel: TrackViewModel){
                     },
                     update = {
                         trackPolyline.setPoints(viewModel.points.map { it.toGeoPoint() })
+                        importedPolyline.setPoints(viewModel.importedPoints.map { it.toGeoPoint() })
                         mapView.invalidate()
                     },
                     modifier = Modifier.fillMaxSize()
@@ -205,8 +224,11 @@ fun TrackScreen(viewModel: TrackViewModel){
                 }
                 Text(statusText, color = statusColor, style = MaterialTheme.typography.titleMedium)
 
-                // Счётчик (отдельно, чтобы был всегда)
+                // Счётчик
                 Text("Точек: ${viewModel.points.size}")
+                if (viewModel.status != TrackStat.IDLE) {
+                    Text("Расстояние: ${"%.0f".format(viewModel.distanceMeters)} м")
+                }
 
                 // Кнопка с двумя состояниями
                 val recording = viewModel.status == TrackStat.RECORDING
@@ -219,6 +241,14 @@ fun TrackScreen(viewModel: TrackViewModel){
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(if (recording) "Остановить запись" else "Начать запись")
+                }
+                OutlinedButton(
+                    onClick = {
+                        openFileLauncher.launch(arrayOf("text/comma-separated-values", "text/csv", "*/*"))
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Загрузить трек")
                 }
             }
         }

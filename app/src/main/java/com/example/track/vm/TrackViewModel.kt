@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.net.Uri
 import android.os.Environment
 import android.os.Looper
 import android.provider.MediaStore
@@ -34,9 +35,18 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
     var currentLocation by mutableStateOf<Location?>(null); private set
     var gpsError by mutableStateOf<String?>(null); private set
 
+    var distanceMeters by mutableStateOf(0f); private set
+    var importedPoints by mutableStateOf<List<TrackPoint>>(emptyList()); private set
+    var importMessage by mutableStateOf<String?>(null); private set
+
     private val listener = LocationListener { loc ->
         currentLocation = loc
         if (status == TrackStat.RECORDING) {
+            points.lastOrNull()?.let { prev ->
+                val result = FloatArray(1)
+                Location.distanceBetween(prev.lat, prev.lon, loc.latitude, loc.longitude, result)
+                distanceMeters += result[0]
+            }
             points = points + TrackPoint(loc.time, loc.latitude, loc.longitude)
         }
     }
@@ -116,4 +126,33 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
 
         exportMessage = "Сохранено: ${Environment.DIRECTORY_DOWNLOADS}/$fileName"
     }
+    fun importTrack(uri: Uri) {
+        val resolver = getApplication<Application>().contentResolver
+        val text = resolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+        if (text.isNullOrBlank()) {
+            importMessage = "Не удалось прочитать файл"
+            return
+        }
+        val parsed = text.lineSequence()
+            .drop(1) // пропускаем шапку "time,lat,lon"
+            .filter { it.isNotBlank() }
+            .mapNotNull { line ->
+                val p = line.split(",")
+                if (p.size < 3) return@mapNotNull null
+                val t = p[0].trim().toLongOrNull()
+                val lat = p[1].trim().toDoubleOrNull()
+                val lon = p[2].trim().toDoubleOrNull()
+                if (t != null && lat != null && lon != null) TrackPoint(t, lat, lon) else null
+            }
+            .toList()
+
+        if (parsed.isEmpty()) {
+            importMessage = "В файле нет валидных точек"
+        } else {
+            importedPoints = parsed
+            importMessage = "Загружено точек: ${parsed.size}"
+        }
+    }
+
+    fun consumeImportMessage() { importMessage = null }
 }
