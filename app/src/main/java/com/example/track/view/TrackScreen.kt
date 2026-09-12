@@ -5,7 +5,6 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color.WHITE
-import android.graphics.Color.parseColor
 import android.graphics.Paint
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,7 +50,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.overlay.Polyline
 
 @Composable
-fun TrackScreen(viewModel: TrackViewModel){
+fun TrackScreen(viewModel: TrackViewModel) {
     val osmDe = org.osmdroid.tileprovider.tilesource.XYTileSource(
         "OSM-DE",
         0, 19, 256, ".png",
@@ -63,7 +62,8 @@ fun TrackScreen(viewModel: TrackViewModel){
 
     val requiredPermissions = arrayOf(
         Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.POST_NOTIFICATIONS
     )
     var permissionGranted by remember {
         mutableStateOf(
@@ -75,25 +75,17 @@ fun TrackScreen(viewModel: TrackViewModel){
     }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        results ->
-        permissionGranted = results.values.any{it}
+    ) { results ->
+        permissionGranted = results.values.any { it }
     }
     val openFileLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { viewModel.importTrack(it) } }
-    val importedPolyline = remember {
-        Polyline().apply {
-            outlinePaint.color = "#1E88E5".toColorInt()
-            outlinePaint.strokeWidth = 10f
-        }
-    }
+
     LaunchedEffect(Unit) {
         if (!permissionGranted) permissionLauncher.launch(requiredPermissions)
     }
-    LaunchedEffect(permissionGranted) {
-        if (permissionGranted) viewModel.startLocationUpdates()
-    }
+
     LaunchedEffect(importMessage) {
         importMessage?.let {
             snackbarHostState.showSnackbar(it)
@@ -114,32 +106,47 @@ fun TrackScreen(viewModel: TrackViewModel){
             viewModel.consumeExportMessage()
         }
     }
+
     val mapView = remember {
         MapView(context).apply {
             setTileSource(osmDe)
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.ALWAYS)
             controller.setZoom(16.0)
+        }
+    }
 
-            overlays.add(
-                MyLocationNewOverlay(this).apply {
-                    setPersonIcon(createLocationIcon())
-                    enableMyLocation()
-                    enableFollowLocation()
-                }
-            )
-            val myLocation = MyLocationNewOverlay(this).apply {
-                setPersonIcon(createLocationIcon())
-                enableMyLocation()
-                enableFollowLocation()
-            }
-            overlays.add(myLocation)
+    // Overlay маркера — ОДИН, создан отдельно, чтобы можно было включать после выдачи разрешения
+    val myLocationOverlay = remember(mapView) {
+        MyLocationNewOverlay(mapView).apply {
+            setPersonIcon(createLocationIcon())
+        }
+    }
+
+    LaunchedEffect(mapView) {
+        mapView.overlays.add(myLocationOverlay)
+    }
+
+    // КЛЮЧЕВОЙ ФИКС: включаем myLocation только когда разрешение точно есть.
+    // При первом запуске permissionGranted становится true ПОСЛЕ диалога —
+    // и вот тут overlay реально активируется.
+    LaunchedEffect(permissionGranted) {
+        if (permissionGranted) {
+            myLocationOverlay.enableMyLocation()
+            myLocationOverlay.enableFollowLocation()
+            mapView.invalidate()
         }
     }
 
     val trackPolyline = remember {
         Polyline().apply {
             outlinePaint.color = "#D32F2F".toColorInt()
+            outlinePaint.strokeWidth = 10f
+        }
+    }
+    val importedPolyline = remember {
+        Polyline().apply {
+            outlinePaint.color = "#1E88E5".toColorInt()
             outlinePaint.strokeWidth = 10f
         }
     }
@@ -153,6 +160,7 @@ fun TrackScreen(viewModel: TrackViewModel){
         mapView.onResume()
         onDispose { mapView.onPause() }
     }
+
     Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             // карта
@@ -183,10 +191,7 @@ fun TrackScreen(viewModel: TrackViewModel){
                         viewModel.currentLocation?.let {
                             mapView.controller.animateTo(GeoPoint(it.latitude, it.longitude))
                         }
-                        mapView.overlays
-                            .filterIsInstance<MyLocationNewOverlay>()
-                            .firstOrNull()
-                            ?.enableFollowLocation()
+                        myLocationOverlay.enableFollowLocation()
                     },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
@@ -224,13 +229,11 @@ fun TrackScreen(viewModel: TrackViewModel){
                 }
                 Text(statusText, color = statusColor, style = MaterialTheme.typography.titleMedium)
 
-                // Счётчик
                 Text("Точек: ${viewModel.points.size}")
                 if (viewModel.status != TrackStat.IDLE) {
                     Text("Расстояние: ${"%.0f".format(viewModel.distanceMeters)} м")
                 }
 
-                // Кнопка с двумя состояниями
                 val recording = viewModel.status == TrackStat.RECORDING
                 Button(
                     onClick = { viewModel.toggleRecording() },
@@ -253,14 +256,14 @@ fun TrackScreen(viewModel: TrackViewModel){
             }
         }
     }
-
 }
+
 private fun createLocationIcon(): Bitmap {
     val size = 96
     val bmp = createBitmap(size, size)
     val canvas = Canvas(bmp)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    paint.color = "#2196F3".toColorInt() // синий круг
+    paint.color = "#2196F3".toColorInt()
     canvas.drawCircle(size / 2f, size / 2f, size / 2.6f, paint)
     paint.color = WHITE
     canvas.drawCircle(size / 2f, size / 2f, size / 6f, paint)

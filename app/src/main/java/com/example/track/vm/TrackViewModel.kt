@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
@@ -19,11 +20,17 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import com.example.track.data.TrackPoint
+import com.example.track.data.TrackRecorderService
 import com.example.track.data.TrackStat
+import com.example.track.data.TrackStore
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@OptIn(DelicateCoroutinesApi::class)
 class TrackViewModel(app: Application) : AndroidViewModel(app) {
     private val locationManager =
         app.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -50,39 +57,27 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
             points = points + TrackPoint(loc.time, loc.latitude, loc.longitude)
         }
     }
-    @SuppressLint("Missing permission")
-    fun startLocationUpdates(){
-        val granted = ContextCompat.checkSelfPermission(
-            getApplication(),
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) return
-
-        if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)){
-            gpsError = "GPS выключен. Включите геолокацию в настройках устройства."
-            return
+    init {
+        GlobalScope.launch {
+            TrackStore.points.collect { points = it }
         }
-        locationManager.requestLocationUpdates(
-            LocationManager.GPS_PROVIDER,
-            2000L,
-            1f,
-            listener,
-            Looper.getMainLooper()
-        )
+        GlobalScope.launch { TrackStore.status.collect { status = it } }
+        GlobalScope.launch { TrackStore.currentLocation.collect { currentLocation = it } }
+        GlobalScope.launch { TrackStore.distanceMeters.collect { distanceMeters = it } }
     }
     fun toggleRecording() {
-        when (status) {
+        val app = getApplication<Application>()
+        when (TrackStore.status.value) {
             TrackStat.RECORDING -> {
-                status = TrackStat.STOPPED
-                exportTrack()          // файл формируется сразу после остановки
+                TrackStore.status.value = TrackStat.STOPPED
+                app.stopService(Intent(app, TrackRecorderService::class.java))
+                exportTrack()
             }
             else -> {
-                points = emptyList()
-                status = TrackStat.RECORDING
-                // стартовая точка
-                currentLocation?.let { loc ->
-                    points = points + TrackPoint(loc.time, loc.latitude, loc.longitude)
-                }
+                TrackStore.points.value = emptyList()
+                TrackStore.distanceMeters.value = 0f
+                TrackStore.status.value = TrackStat.RECORDING
+                app.startForegroundService(Intent(app, TrackRecorderService::class.java))
             }
         }
     }
