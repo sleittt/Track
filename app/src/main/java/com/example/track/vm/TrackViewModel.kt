@@ -64,6 +64,7 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
         GlobalScope.launch { TrackStore.status.collect { status = it } }
         GlobalScope.launch { TrackStore.currentLocation.collect { currentLocation = it } }
         GlobalScope.launch { TrackStore.distanceMeters.collect { distanceMeters = it } }
+        GlobalScope.launch { TrackStore.gpsError.collect { gpsError = it } }
     }
     fun toggleRecording() {
         val app = getApplication<Application>()

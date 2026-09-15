@@ -41,7 +41,7 @@ class TrackRecorderService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    @SuppressLint("MissingPermission") // сервис стартует только после granted
+    @SuppressLint("MissingPermission")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notif: Notification = NotificationCompat.Builder(this, "track")
             .setContentTitle("TrackMe")
@@ -54,6 +54,13 @@ class TrackRecorderService : Service() {
             startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         } else {
             startForeground(1, notif)
+        }
+
+        if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            TrackStore.gpsError.value = "GPS выключен. Включите геолокацию в настройках."
+            stopForeground(STOP_FOREGROUND_REMOVE)  // убрать уведомление
+            stopSelf()
+            return START_NOT_STICKY
         }
 
         locationManager.requestLocationUpdates(

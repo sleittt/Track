@@ -8,4 +8,5 @@ object TrackStore {
     val status = MutableStateFlow(TrackStat.IDLE)
     val currentLocation = MutableStateFlow<Location?>(null)
     val distanceMeters = MutableStateFlow(0f)
+    val gpsError = MutableStateFlow<String?>(null)
 }
